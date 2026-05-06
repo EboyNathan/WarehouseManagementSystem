@@ -144,7 +144,7 @@ public class DataStorage {
 
         String findItemSql = "SELECT id, name, quantity FROM items WHERE item_code = ? OR name = ? LIMIT 1 FOR UPDATE";
         String updateStockSql = "UPDATE items SET quantity = quantity - ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?";
-        String insertOrderSql = "INSERT INTO orders (order_code, customer_name, item_id, quantity, status, order_date, paid, payment_method) VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
+        String insertOrderSql = "INSERT INTO orders (order_code, customer_name, customer_username, item_id, quantity, status, order_date, paid, payment_method, courier_name, forwarded_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
 
         try (Connection connection = openConnection()) {
             connection.setAutoCommit(false);
@@ -177,12 +177,23 @@ public class DataStorage {
 
                         insertOrder.setString(1, order.id);
                         insertOrder.setString(2, order.customer);
-                        insertOrder.setInt(3, itemId);
-                        insertOrder.setInt(4, order.quantity);
-                        insertOrder.setString(5, order.status);
-                        insertOrder.setDate(6, Date.valueOf(order.date));
-                        insertOrder.setBoolean(7, order.paid);
-                        insertOrder.setString(8, order.paymentMethod);
+                        insertOrder.setString(3, order.customerUsername == null || order.customerUsername.isBlank() ? null : order.customerUsername);
+                        insertOrder.setInt(4, itemId);
+                        insertOrder.setInt(5, order.quantity);
+                        insertOrder.setString(6, order.status);
+                        insertOrder.setDate(7, Date.valueOf(order.date));
+                        insertOrder.setBoolean(8, order.paid);
+                        insertOrder.setString(9, order.paymentMethod);
+                        if (order.courierName == null || order.courierName.isBlank()) {
+                            insertOrder.setNull(10, Types.VARCHAR);
+                        } else {
+                            insertOrder.setString(10, order.courierName);
+                        }
+                        if (order.forwardedAt == null || order.forwardedAt.isBlank()) {
+                            insertOrder.setNull(11, Types.TIMESTAMP);
+                        } else {
+                            insertOrder.setString(11, order.forwardedAt);
+                        }
                         insertOrder.executeUpdate();
                     }
 
@@ -205,7 +216,7 @@ public class DataStorage {
 
     public synchronized List<Order> getOrders() {
         String sql = """
-                SELECT o.order_code, o.customer_name, i.name AS item_name, o.quantity, o.status, o.order_date, o.paid, o.payment_method
+                SELECT o.order_code, o.customer_name, o.customer_username, i.name AS item_name, o.quantity, o.status, o.order_date, o.paid, o.payment_method, o.courier_name, o.forwarded_at
                 FROM orders o
                 JOIN items i ON i.id = o.item_id
                 ORDER BY o.id
@@ -224,7 +235,10 @@ public class DataStorage {
                         resultSet.getString("status"),
                         resultSet.getDate("order_date").toLocalDate().toString(),
                         resultSet.getBoolean("paid"),
-                        resultSet.getString("payment_method")
+                        resultSet.getString("payment_method"),
+                        resultSet.getString("customer_username"),
+                        resultSet.getString("courier_name"),
+                        resultSet.getString("forwarded_at")
                 ));
             }
             return orders;
@@ -235,7 +249,7 @@ public class DataStorage {
 
     public synchronized Order findOrderById(String orderId) {
         String sql = """
-                SELECT o.order_code, o.customer_name, i.name AS item_name, o.quantity, o.status, o.order_date, o.paid, o.payment_method
+                SELECT o.order_code, o.customer_name, o.customer_username, i.name AS item_name, o.quantity, o.status, o.order_date, o.paid, o.payment_method, o.courier_name, o.forwarded_at
                 FROM orders o
                 JOIN items i ON i.id = o.item_id
                 WHERE o.order_code = ?
@@ -250,11 +264,14 @@ public class DataStorage {
                             resultSet.getString("order_code"),
                             resultSet.getString("customer_name"),
                             resultSet.getString("item_name"),
-                            resultSet.getInt("quantity"),
-                            resultSet.getString("status"),
-                            resultSet.getDate("order_date").toLocalDate().toString(),
-                            resultSet.getBoolean("paid"),
-                            resultSet.getString("payment_method")
+                        resultSet.getInt("quantity"),
+                        resultSet.getString("status"),
+                        resultSet.getDate("order_date").toLocalDate().toString(),
+                        resultSet.getBoolean("paid"),
+                        resultSet.getString("payment_method"),
+                        resultSet.getString("customer_username"),
+                        resultSet.getString("courier_name"),
+                        resultSet.getString("forwarded_at")
                     );
                 }
                 return null;
@@ -276,6 +293,24 @@ public class DataStorage {
             }
         } catch (SQLException e) {
             throw mapDatabaseError("Failed to update order status.", e);
+        }
+    }
+
+    public synchronized void assignCourier(String orderId, String courierName) {
+        String sql = """
+                UPDATE orders
+                SET courier_name = ?, forwarded_at = CURRENT_TIMESTAMP, status = 'FORWARDED TO COURIER'
+                WHERE order_code = ?
+                """;
+        try (Connection connection = openConnection();
+             PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setString(1, courierName);
+            statement.setString(2, orderId);
+            if (statement.executeUpdate() == 0) {
+                throw new IllegalArgumentException("Order not found.");
+            }
+        } catch (SQLException e) {
+            throw mapDatabaseError("Failed to assign courier.", e);
         }
     }
 
@@ -494,6 +529,7 @@ public class DataStorage {
             ensureItemsTable(connection);
             ensureOrdersTable(connection);
             ensureAdminUser(connection);
+            ensureDefaultInventoryItems(connection);
         } catch (SQLException e) {
             throw mapDatabaseError("Failed to initialize database.", e);
         }
@@ -559,12 +595,15 @@ public class DataStorage {
                     id INT NOT NULL AUTO_INCREMENT,
                     order_code VARCHAR(50) NOT NULL,
                     customer_name VARCHAR(100) NOT NULL,
+                    customer_username VARCHAR(45) NULL,
                     item_id INT NOT NULL,
                     quantity INT NOT NULL,
                     status VARCHAR(50) NOT NULL,
                     order_date DATE NOT NULL,
                     paid TINYINT(1) NOT NULL DEFAULT 0,
                     payment_method VARCHAR(20) NULL,
+                    courier_name VARCHAR(40) NULL,
+                    forwarded_at TIMESTAMP NULL,
                     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     PRIMARY KEY (id),
                     UNIQUE KEY uq_orders_order_code (order_code),
@@ -575,6 +614,81 @@ public class DataStorage {
                 "ALTER TABLE orders ADD COLUMN paid TINYINT(1) NOT NULL DEFAULT 0");
         ensureColumn(connection, "orders", "payment_method",
                 "ALTER TABLE orders ADD COLUMN payment_method VARCHAR(20) NULL");
+        ensureColumn(connection, "orders", "customer_username",
+                "ALTER TABLE orders ADD COLUMN customer_username VARCHAR(45) NULL");
+        ensureColumn(connection, "orders", "courier_name",
+                "ALTER TABLE orders ADD COLUMN courier_name VARCHAR(40) NULL");
+        ensureColumn(connection, "orders", "forwarded_at",
+                "ALTER TABLE orders ADD COLUMN forwarded_at TIMESTAMP NULL");
+    }
+
+    private void ensureDefaultInventoryItems(Connection connection) throws SQLException {
+        String countSql = "SELECT COUNT(*) FROM items";
+        try (PreparedStatement countStmt = connection.prepareStatement(countSql);
+             ResultSet rs = countStmt.executeQuery()) {
+            rs.next();
+            if (rs.getInt(1) > 0) {
+                return;
+            }
+        }
+        List<Item> defaults = List.of(
+                // Electronics
+                new Item("ELEC-001", "Laptop", "Electronics", 20, 42000.00),
+                new Item("ELEC-002", "Desktop Computer", "Electronics", 12, 36000.00),
+                new Item("ELEC-003", "Printer", "Electronics", 18, 8500.00),
+                new Item("ELEC-004", "Router", "Electronics", 30, 2500.00),
+                new Item("ELEC-005", "Monitor", "Electronics", 24, 7800.00),
+
+                // Office supplies
+                new Item("OFF-001", "Bond Paper", "Office supplies", 100, 280.00),
+                new Item("OFF-002", "Ballpen", "Office supplies", 200, 25.00),
+                new Item("OFF-003", "Notebook", "Office supplies", 140, 65.00),
+                new Item("OFF-004", "Stapler", "Office supplies", 60, 145.00),
+                new Item("OFF-005", "Folders", "Office supplies", 120, 35.00),
+
+                // tools & equipment
+                new Item("TOOL-001", "Hammer", "tools & equipment", 50, 320.00),
+                new Item("TOOL-002", "Screwdriver", "tools & equipment", 85, 120.00),
+                new Item("TOOL-003", "Drill Machine", "tools & equipment", 22, 3400.00),
+                new Item("TOOL-004", "Wrench", "tools & equipment", 48, 260.00),
+                new Item("TOOL-005", "Measuring Tape", "tools & equipment", 75, 140.00),
+
+                // Consumables
+                new Item("CON-001", "Packaging Tape", "Consumables", 160, 85.00),
+                new Item("CON-002", "Carton Box", "Consumables", 130, 45.00),
+                new Item("CON-003", "Bubble Wrap", "Consumables", 90, 210.00),
+                new Item("CON-004", "Plastic Bags", "Consumables", 220, 30.00),
+                new Item("CON-005", "Cleaning Solution", "Consumables", 70, 180.00),
+
+                // Spare Parts
+                new Item("SP-001", "Bolts", "Spare Parts", 300, 4.00),
+                new Item("SP-002", "Nuts", "Spare Parts", 300, 3.00),
+                new Item("SP-003", "Screws", "Spare Parts", 500, 2.50),
+                new Item("SP-004", "Bearings", "Spare Parts", 120, 95.00),
+                new Item("SP-005", "Fuses", "Spare Parts", 150, 18.00),
+
+                // Finished goods
+                new Item("FG-001", "Shoes", "Finished goods", 80, 1299.00),
+                new Item("FG-002", "T-Shirts", "Finished goods", 140, 399.00),
+                new Item("FG-003", "Backpacks", "Finished goods", 60, 899.00),
+                new Item("FG-004", "Water Bottles", "Finished goods", 110, 220.00),
+                new Item("FG-005", "Headphones", "Finished goods", 55, 1599.00)
+        );
+        String insertSql = "INSERT INTO items (item_code, name, category, quantity, price, aisle, rack, bin_code) VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
+
+        for (Item item : defaults) {
+            try (PreparedStatement insertStmt = connection.prepareStatement(insertSql)) {
+                insertStmt.setString(1, item.id);
+                insertStmt.setString(2, item.name);
+                insertStmt.setString(3, item.category);
+                insertStmt.setInt(4, item.quantity);
+                insertStmt.setDouble(5, item.price);
+                insertStmt.setString(6, "");
+                insertStmt.setString(7, "");
+                insertStmt.setString(8, "");
+                insertStmt.executeUpdate();
+            }
+        }
     }
 
     private void ensureAdminUser(Connection connection) throws SQLException {
@@ -716,6 +830,9 @@ public class DataStorage {
         public String date;
         public boolean paid;
         public String paymentMethod;
+        public String customerUsername;
+        public String courierName;
+        public String forwardedAt;
 
         public Order(String id, String customer, String itemName, int quantity, String status, String date) {
             this(id, customer, itemName, quantity, status, date, false, "");
@@ -726,6 +843,14 @@ public class DataStorage {
         }
 
         public Order(String id, String customer, String itemName, int quantity, String status, String date, boolean paid, String paymentMethod) {
+            this(id, customer, itemName, quantity, status, date, paid, paymentMethod, "", "", "");
+        }
+
+        public Order(String id, String customer, String itemName, int quantity, String status, String date, boolean paid, String paymentMethod, String courierName, String forwardedAt) {
+            this(id, customer, itemName, quantity, status, date, paid, paymentMethod, "", courierName, forwardedAt);
+        }
+
+        public Order(String id, String customer, String itemName, int quantity, String status, String date, boolean paid, String paymentMethod, String customerUsername, String courierName, String forwardedAt) {
             this.id = id;
             this.customer = customer;
             this.itemName = itemName;
@@ -734,6 +859,9 @@ public class DataStorage {
             this.date = date;
             this.paid = paid;
             this.paymentMethod = paymentMethod == null ? "" : paymentMethod;
+            this.customerUsername = customerUsername == null ? "" : customerUsername;
+            this.courierName = courierName == null ? "" : courierName;
+            this.forwardedAt = forwardedAt == null ? "" : forwardedAt;
         }
     }
 }

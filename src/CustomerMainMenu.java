@@ -1,26 +1,33 @@
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
+import javax.swing.table.DefaultTableModel;
 import java.awt.*;
 import java.awt.image.BufferedImage;
+import java.io.File;
 import java.net.URL;
+import java.net.URLConnection;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.text.NumberFormat;
 import java.time.LocalDate;
-import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 public class CustomerMainMenu {
     private static final String SHOP_VIEW = "shop";
     private static final String CART_VIEW = "cart";
     private static final String PAYMENT_VIEW = "payment";
+    private static final String PROFILE_VIEW = "profile";
 
     private final DataStorage.User currentUser;
     private final Runnable logoutHandler;
     private final Map<Product, Integer> cart = new LinkedHashMap<>();
     private final NumberFormat currencyFormat = NumberFormat.getCurrencyInstance();
-    private final List<Product> products = new ArrayList<>();
+    private final List<Product> products = new java.util.ArrayList<>();
     private final CardLayout contentLayout = new CardLayout();
+    private static final int QR_SIZE = 280;
 
     private JPanel mainPanel;
     private JPanel contentPanel;
@@ -39,11 +46,15 @@ public class CustomerMainMenu {
     private JLabel paymentDeliveryLabel;
     private Map<Product, Integer> paymentItems = new LinkedHashMap<>();
     private boolean paymentIsPreOrder;
+    private JTextField profileFullNameField;
+    private JTextField profileAddressField;
+    private JTextField profilePhoneField;
+    private JTable profileHistoryTable;
 
     public CustomerMainMenu(DataStorage.User currentUser, Runnable logoutHandler) {
         this.currentUser = currentUser;
         this.logoutHandler = logoutHandler;
-        seedProducts();
+        loadProductsFromInventory();
         buildUi();
     }
 
@@ -56,6 +67,7 @@ public class CustomerMainMenu {
         contentPanel.add(buildShopPanel(), SHOP_VIEW);
         contentPanel.add(buildCartPanel(), CART_VIEW);
         contentPanel.add(buildPaymentPanel(), PAYMENT_VIEW);
+        contentPanel.add(buildProfilePanel(), PROFILE_VIEW);
 
         mainPanel.add(contentPanel, BorderLayout.CENTER);
         showView(SHOP_VIEW);
@@ -72,7 +84,15 @@ public class CustomerMainMenu {
 
         JPanel left = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 0));
         left.setOpaque(false);
-        categoryBox = new JComboBox<>(new String[]{"All", "Accessories", "Office", "Cables", "Storage", "Audio", "Networking"});
+        categoryBox = new JComboBox<>(new String[]{
+                "All",
+                "Electronics",
+                "Office supplies",
+                "tools & equipment",
+                "Consumables",
+                "Spare Parts",
+                "Finished goods"
+        });
         searchField = new JTextField(16);
         JButton searchButton = new JButton("Search");
         styleHeaderButton(searchButton, new Color(25, 135, 84));
@@ -91,7 +111,7 @@ public class CustomerMainMenu {
         userLabel.addMouseListener(new java.awt.event.MouseAdapter() {
             @Override
             public void mouseClicked(java.awt.event.MouseEvent e) {
-                openProfileDialog();
+                showProfilePanel();
             }
         });
 
@@ -107,7 +127,7 @@ public class CustomerMainMenu {
             refreshCartPanel();
             showView(CART_VIEW);
         });
-        profileButton.addActionListener(e -> openProfileDialog());
+        profileButton.addActionListener(e -> showProfilePanel());
         logoutButton.addActionListener(e -> {
             if (logoutHandler != null) {
                 logoutHandler.run();
@@ -137,9 +157,9 @@ public class CustomerMainMenu {
         title.setBorder(new EmptyBorder(24, 0, 18, 0));
         shopPanel.add(title, BorderLayout.NORTH);
 
-        cardsPanel = new JPanel(new GridLayout(0, 4, 14, 14));
+        cardsPanel = new JPanel(new GridLayout(0, 4, 12, 12));
         cardsPanel.setOpaque(false);
-        cardsPanel.setBorder(new EmptyBorder(12, 28, 18, 28));
+        cardsPanel.setBorder(new EmptyBorder(10, 20, 14, 20));
         refreshProductCards();
 
         JScrollPane scrollPane = new JScrollPane(cardsPanel);
@@ -177,6 +197,11 @@ public class CustomerMainMenu {
         JButton checkout = new JButton("Proceed to Payment");
         styleActionButton(continueShopping, new Color(108, 117, 125));
         styleActionButton(checkout, new Color(46, 125, 50));
+        continueShopping.setPreferredSize(new Dimension(190, 38));
+        checkout.setPreferredSize(new Dimension(240, 38));
+        checkout.setMinimumSize(new Dimension(240, 38));
+        continueShopping.setFont(new Font("Segoe UI", Font.BOLD, 14));
+        checkout.setFont(new Font("Segoe UI", Font.BOLD, 14));
         continueShopping.addActionListener(e -> showView(SHOP_VIEW));
         checkout.addActionListener(e -> {
             Map<Product, Integer> items = getNonZeroCartItems();
@@ -246,16 +271,84 @@ public class CustomerMainMenu {
         return wrapper;
     }
 
+    private JPanel buildProfilePanel() {
+        JPanel profilePanel = new JPanel(new BorderLayout(0, 12));
+        profilePanel.setOpaque(false);
+        profilePanel.setBorder(new EmptyBorder(20, 40, 20, 40));
+
+        JLabel title = new JLabel("Profile");
+        title.setFont(new Font("Segoe UI", Font.BOLD, 34));
+        title.setForeground(new Color(18, 56, 124));
+        profilePanel.add(title, BorderLayout.NORTH);
+
+        JPanel body = new JPanel(new GridLayout(1, 2, 14, 0));
+        body.setOpaque(false);
+
+        JPanel formPanel = new JPanel(new GridLayout(0, 1, 8, 8));
+        formPanel.setBackground(new Color(245, 246, 248));
+        formPanel.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(new Color(205, 212, 222)),
+                new EmptyBorder(14, 14, 14, 14)
+        ));
+
+        formPanel.add(label("Full Name", Font.BOLD, 14, new Color(33, 37, 41)));
+        profileFullNameField = new JTextField();
+        formPanel.add(profileFullNameField);
+        formPanel.add(label("Address", Font.BOLD, 14, new Color(33, 37, 41)));
+        profileAddressField = new JTextField();
+        formPanel.add(profileAddressField);
+        formPanel.add(label("Phone Number", Font.BOLD, 14, new Color(33, 37, 41)));
+        profilePhoneField = new JTextField();
+        formPanel.add(profilePhoneField);
+
+        JPanel formActions = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
+        formActions.setOpaque(false);
+        JButton saveProfile = new JButton("Save Profile");
+        JButton backToShop = new JButton("Back to Shop");
+        styleActionButton(saveProfile, new Color(25, 118, 210));
+        styleActionButton(backToShop, new Color(108, 117, 125));
+        saveProfile.addActionListener(e -> saveProfileChanges());
+        backToShop.addActionListener(e -> showView(SHOP_VIEW));
+        formActions.add(saveProfile);
+        formActions.add(backToShop);
+        formPanel.add(new JLabel());
+        formPanel.add(formActions);
+
+        JPanel historyPanel = new JPanel(new BorderLayout(0, 8));
+        historyPanel.setBackground(new Color(245, 246, 248));
+        historyPanel.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(new Color(205, 212, 222)),
+                new EmptyBorder(14, 14, 14, 14)
+        ));
+        historyPanel.add(label("Purchase History", Font.BOLD, 18, new Color(33, 37, 41)), BorderLayout.NORTH);
+
+        profileHistoryTable = new JTable();
+        profileHistoryTable.setRowHeight(24);
+        profileHistoryTable.setModel(new DefaultTableModel(new Object[][]{}, new Object[]{"Order ID", "Item", "Qty", "Status", "Delivery ETA"}) {
+            @Override
+            public boolean isCellEditable(int row, int column) {
+                return false;
+            }
+        });
+        historyPanel.add(new JScrollPane(profileHistoryTable), BorderLayout.CENTER);
+
+        body.add(formPanel);
+        body.add(historyPanel);
+        profilePanel.add(body, BorderLayout.CENTER);
+        return profilePanel;
+    }
+
     private JPanel createProductCard(Product product) {
         JPanel card = new JPanel(new BorderLayout(0, 8));
         card.setBackground(new Color(245, 246, 248));
+        card.setPreferredSize(new Dimension(280, 300));
         card.setBorder(BorderFactory.createCompoundBorder(
                 BorderFactory.createLineBorder(new Color(205, 212, 222)),
                 new EmptyBorder(8, 8, 8, 8)
         ));
 
-        JLabel image = new JLabel(loadProductImage(product.imageUrl), SwingConstants.CENTER);
-        image.setPreferredSize(new Dimension(210, 130));
+        JLabel image = new JLabel(loadProductImage(product.imageUrl, product.name), SwingConstants.CENTER);
+        image.setPreferredSize(new Dimension(220, 125));
         card.add(image, BorderLayout.NORTH);
 
         JPanel meta = new JPanel(new GridLayout(0, 1));
@@ -265,54 +358,75 @@ public class CustomerMainMenu {
         meta.add(label("Stock: " + product.stock, Font.PLAIN, 13, new Color(73, 80, 87)));
         card.add(meta, BorderLayout.CENTER);
 
-        JTextField qtyField = new JTextField("1");
-        qtyField.setHorizontalAlignment(SwingConstants.CENTER);
-        qtyField.setPreferredSize(new Dimension(44, 28));
+        int maxQty = product.stock > 0 ? product.stock : 9999;
+        JSpinner qtySpinner = new JSpinner(new SpinnerNumberModel(1, 1, maxQty, 1));
+        qtySpinner.setPreferredSize(new Dimension(58, 30));
+        JComponent editor = qtySpinner.getEditor();
+        if (editor instanceof JSpinner.DefaultEditor defaultEditor) {
+            JTextField textField = defaultEditor.getTextField();
+            textField.setHorizontalAlignment(SwingConstants.CENTER);
+            textField.setFont(new Font("Segoe UI", Font.PLAIN, 14));
+        }
 
         JButton minus = new JButton("-");
         JButton plus = new JButton("+");
         styleQuantityButton(minus);
         styleQuantityButton(plus);
-        plus.setText("+");
         minus.addActionListener(e -> {
-            int qty = readQuantity(qtyField);
+            int qty = (Integer) qtySpinner.getValue();
             if (qty > 1) {
-                qtyField.setText(String.valueOf(qty - 1));
+                qtySpinner.setValue(qty - 1);
             }
         });
-        plus.addActionListener(e -> qtyField.setText(String.valueOf(readQuantity(qtyField) + 1)));
+        plus.addActionListener(e -> {
+            int qty = (Integer) qtySpinner.getValue();
+            if (qty < maxQty) {
+                qtySpinner.setValue(qty + 1);
+            }
+        });
 
-        JButton addToCart = new JButton("Add to Cart");
-        JButton buyNow = new JButton(product.stock > 0 ? "Buy Now" : "Pre-Order");
+        JButton addToCart = new JButton(product.stock > 0 ? "Add to Cart" : "Out of Stock");
+        JButton buyNow = new JButton(product.stock > 0 ? "Buy Now" : "Unavailable");
         styleActionButton(addToCart, new Color(25, 118, 210));
-        styleActionButton(buyNow, product.stock > 0 ? new Color(46, 125, 50) : new Color(255, 143, 0));
+        styleActionButton(buyNow, product.stock > 0 ? new Color(46, 125, 50) : new Color(107, 114, 128));
+        if (product.stock <= 0) {
+            addToCart.setEnabled(false);
+            buyNow.setEnabled(false);
+            qtySpinner.setEnabled(false);
+            minus.setEnabled(false);
+            plus.setEnabled(false);
+        }
 
         addToCart.addActionListener(e -> {
-            int qty = readQuantity(qtyField);
+            int qty = (Integer) qtySpinner.getValue();
+            if (product.stock <= 0) {
+                JOptionPane.showMessageDialog(mainPanel, "This item is currently out of stock.", "Unavailable", JOptionPane.WARNING_MESSAGE);
+                return;
+            }
             cart.put(product, qty);
             updateCartBadge();
             JOptionPane.showMessageDialog(mainPanel, product.name + " added to cart.", "Cart", JOptionPane.INFORMATION_MESSAGE);
         });
         buyNow.addActionListener(e -> {
-            int qty = readQuantity(qtyField);
+            int qty = (Integer) qtySpinner.getValue();
             Map<Product, Integer> singleItem = new LinkedHashMap<>();
             singleItem.put(product, qty);
-            openPaymentPanel(singleItem, product.stock <= 0);
+            openPaymentPanel(singleItem, false);
         });
 
-        JPanel controls = new JPanel(new BorderLayout(6, 0));
+        JPanel controls = new JPanel(new BorderLayout(0, 8));
         controls.setOpaque(false);
         JPanel qtyPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
         qtyPanel.setOpaque(false);
         qtyPanel.add(minus);
-        qtyPanel.add(qtyField);
+        qtyPanel.add(qtySpinner);
         qtyPanel.add(plus);
-        JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 0));
+        JPanel actions = new JPanel(new GridLayout(1, 2, 8, 0));
         actions.setOpaque(false);
         actions.add(addToCart);
         actions.add(buyNow);
-        controls.add(qtyPanel, BorderLayout.WEST);
-        controls.add(actions, BorderLayout.EAST);
+        controls.add(qtyPanel, BorderLayout.NORTH);
+        controls.add(actions, BorderLayout.CENTER);
         card.add(controls, BorderLayout.SOUTH);
         return card;
     }
@@ -321,13 +435,21 @@ public class CustomerMainMenu {
         cardsPanel.removeAll();
         String category = (String) categoryBox.getSelectedItem();
         String keyword = searchField.getText() == null ? "" : searchField.getText().trim().toLowerCase();
+        int shownCount = 0;
 
         for (Product product : products) {
             boolean matchCategory = "All".equals(category) || product.category.equalsIgnoreCase(category);
             boolean matchSearch = keyword.isEmpty() || product.name.toLowerCase().contains(keyword);
             if (matchCategory && matchSearch) {
                 cardsPanel.add(createProductCard(product));
+                shownCount++;
             }
+        }
+        if (shownCount == 0) {
+            JLabel empty = new JLabel("No products found.", SwingConstants.CENTER);
+            empty.setFont(new Font("Segoe UI", Font.PLAIN, 18));
+            empty.setForeground(new Color(55, 65, 81));
+            cardsPanel.add(empty);
         }
         cardsPanel.revalidate();
         cardsPanel.repaint();
@@ -335,7 +457,7 @@ public class CustomerMainMenu {
 
     private void refreshCartPanel() {
         cartItemsPanel.removeAll();
-        double grandTotal = 0;
+        double subtotal = 0;
         Map<Product, Integer> items = getNonZeroCartItems();
 
         if (items.isEmpty()) {
@@ -346,13 +468,12 @@ public class CustomerMainMenu {
             for (Map.Entry<Product, Integer> entry : items.entrySet()) {
                 Product product = entry.getKey();
                 int qty = entry.getValue();
-                grandTotal += product.price * qty;
+                subtotal += product.price * qty;
                 cartItemsPanel.add(createCartRow(product, qty));
                 cartItemsPanel.add(Box.createVerticalStrut(10));
             }
-            JLabel totalLabel = label("Total: " + currencyFormat.format(grandTotal), Font.BOLD, 20, new Color(18, 56, 124));
-            totalLabel.setBorder(new EmptyBorder(10, 10, 0, 0));
-            cartItemsPanel.add(totalLabel);
+            cartItemsPanel.add(Box.createVerticalStrut(8));
+            cartItemsPanel.add(createOrderSummaryPanel(items, subtotal));
         }
 
         cartItemsPanel.revalidate();
@@ -361,8 +482,11 @@ public class CustomerMainMenu {
 
     private JPanel createCartRow(Product product, int qty) {
         JPanel row = new JPanel(new BorderLayout(10, 0));
-        row.setBackground(new Color(245, 246, 248));
-        row.setBorder(new EmptyBorder(10, 10, 10, 10));
+        row.setBackground(new Color(248, 250, 252));
+        row.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(new Color(226, 232, 240)),
+                new EmptyBorder(10, 10, 10, 10)
+        ));
         row.setMaximumSize(new Dimension(Integer.MAX_VALUE, 72));
 
         JLabel itemInfo = new JLabel(product.name + " | Price: " + currencyFormat.format(product.price));
@@ -402,6 +526,65 @@ public class CustomerMainMenu {
         return row;
     }
 
+    private JPanel createOrderSummaryPanel(Map<Product, Integer> items, double subtotal) {
+        final double deliveryFee = subtotal > 0 ? 49.00 : 0.0;
+        final double total = subtotal + deliveryFee;
+
+        JPanel panel = new JPanel(new BorderLayout(0, 8));
+        panel.setBackground(new Color(241, 245, 249));
+        panel.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(new Color(203, 213, 225)),
+                new EmptyBorder(12, 12, 12, 12)
+        ));
+        panel.setMaximumSize(new Dimension(Integer.MAX_VALUE, 260));
+
+        JLabel title = new JLabel("Order Summary");
+        title.setFont(new Font("Segoe UI", Font.BOLD, 18));
+        title.setForeground(new Color(15, 23, 42));
+        panel.add(title, BorderLayout.NORTH);
+
+        JPanel body = new JPanel();
+        body.setOpaque(false);
+        body.setLayout(new BoxLayout(body, BoxLayout.Y_AXIS));
+
+        for (Map.Entry<Product, Integer> entry : items.entrySet()) {
+            Product product = entry.getKey();
+            int qty = entry.getValue();
+            double lineTotal = product.price * qty;
+            JLabel line = new JLabel(product.name + " x" + qty + "  -  " + currencyFormat.format(lineTotal));
+            line.setFont(new Font("Segoe UI", Font.PLAIN, 13));
+            line.setForeground(new Color(51, 65, 85));
+            body.add(line);
+            body.add(Box.createVerticalStrut(4));
+        }
+
+        body.add(Box.createVerticalStrut(6));
+        body.add(createSummaryLine("Subtotal", currencyFormat.format(subtotal), false));
+        body.add(Box.createVerticalStrut(4));
+        body.add(createSummaryLine("Delivery Fee", currencyFormat.format(deliveryFee), false));
+        body.add(Box.createVerticalStrut(6));
+        body.add(createSummaryLine("Total", currencyFormat.format(total), true));
+
+        panel.add(body, BorderLayout.CENTER);
+        return panel;
+    }
+
+    private JPanel createSummaryLine(String labelText, String valueText, boolean emphasized) {
+        JPanel row = new JPanel(new BorderLayout());
+        row.setOpaque(false);
+
+        JLabel left = new JLabel(labelText);
+        JLabel right = new JLabel(valueText);
+        left.setFont(new Font("Segoe UI", emphasized ? Font.BOLD : Font.PLAIN, emphasized ? 15 : 14));
+        right.setFont(new Font("Segoe UI", emphasized ? Font.BOLD : Font.PLAIN, emphasized ? 15 : 14));
+        left.setForeground(new Color(15, 23, 42));
+        right.setForeground(new Color(15, 23, 42));
+
+        row.add(left, BorderLayout.WEST);
+        row.add(right, BorderLayout.EAST);
+        return row;
+    }
+
     private void openPaymentPanel(Map<Product, Integer> items, boolean preOrder) {
         paymentItems = items;
         paymentIsPreOrder = preOrder;
@@ -431,21 +614,18 @@ public class CustomerMainMenu {
             return;
         }
 
-        currentUser.fullName = name;
-        currentUser.address = address;
-        currentUser.phoneNumber = phone;
-        userLabel.setText(name);
-
-        String mode = paymentIsPreOrder ? "Pre-order placed" : "Order placed";
-        JOptionPane.showMessageDialog(mainPanel, mode + " with " + paymentOptionBox.getSelectedItem() + ".", "Success", JOptionPane.INFORMATION_MESSAGE);
-
-        for (Product product : paymentItems.keySet()) {
-            cart.put(product, 0);
+        String paymentOption = (String) paymentOptionBox.getSelectedItem();
+        if ("QR Code".equals(paymentOption)) {
+            String orderId = generateOrderId();
+            String orderItemsSnapshot = summarizeOrderItems();
+            double totalAmountSnapshot = computePaymentTotal();
+            showQrCheckoutDialog(name, orderId, summarizeOrderItems(), totalAmountSnapshot, () -> {
+                finalizeCheckout(name, address, phone, paymentOption);
+                showCustomerReceipt(name, orderItemsSnapshot, totalAmountSnapshot, paymentOption, "-", "-");
+            });
+            return;
         }
-        paymentItems.clear();
-        updateCartBadge();
-        refreshCartPanel();
-        showView(SHOP_VIEW);
+        showCashCheckoutDialog(name, address, phone, paymentOption, computePaymentTotal());
     }
 
     private Map<Product, Integer> getNonZeroCartItems() {
@@ -470,27 +650,18 @@ public class CustomerMainMenu {
         cartBadgeLabel.setText("Cart (" + total + ")");
     }
 
-    private void openProfileDialog() {
-        JTextField fullNameField = new JTextField(currentUser.fullName);
-        JTextField addressField = new JTextField(currentUser.address);
-        JTextField phoneField = new JTextField(currentUser.phoneNumber);
+    private void showProfilePanel() {
+        profileFullNameField.setText(currentUser.fullName);
+        profileAddressField.setText(currentUser.address);
+        profilePhoneField.setText(currentUser.phoneNumber);
+        refreshProfileHistoryTable();
+        showView(PROFILE_VIEW);
+    }
 
-        JPanel formPanel = new JPanel(new GridLayout(0, 1, 6, 6));
-        formPanel.add(new JLabel("Full Name"));
-        formPanel.add(fullNameField);
-        formPanel.add(new JLabel("Address"));
-        formPanel.add(addressField);
-        formPanel.add(new JLabel("Phone Number"));
-        formPanel.add(phoneField);
-
-        int result = JOptionPane.showConfirmDialog(mainPanel, formPanel, "Edit Profile", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
-        if (result != JOptionPane.OK_OPTION) {
-            return;
-        }
-
-        String fullName = fullNameField.getText().trim();
-        String address = addressField.getText().trim();
-        String phone = phoneField.getText().trim();
+    private void saveProfileChanges() {
+        String fullName = profileFullNameField.getText().trim();
+        String address = profileAddressField.getText().trim();
+        String phone = profilePhoneField.getText().trim();
         if (fullName.isEmpty() || address.isEmpty() || phone.isEmpty()) {
             JOptionPane.showMessageDialog(mainPanel, "All profile fields are required.", "Validation Error", JOptionPane.WARNING_MESSAGE);
             return;
@@ -503,42 +674,112 @@ public class CustomerMainMenu {
             currentUser.phoneNumber = phone;
             userLabel.setText(fullName);
             JOptionPane.showMessageDialog(mainPanel, "Profile updated.", "Success", JOptionPane.INFORMATION_MESSAGE);
+            refreshProfileHistoryTable();
         } catch (Exception exception) {
             JOptionPane.showMessageDialog(mainPanel, exception.getMessage(), "Update Failed", JOptionPane.ERROR_MESSAGE);
         }
     }
 
-    private void seedProducts() {
-        products.add(new Product("Wireless Mouse", "Accessories", 14.99, 43, "https://images.unsplash.com/photo-1527814050087-3793815479db?w=640"));
-        products.add(new Product("Mechanical Keyboard", "Accessories", 49.99, 18, "https://images.unsplash.com/photo-1541140532154-b024d705b90a?w=640"));
-        products.add(new Product("Laptop Stand", "Accessories", 27.50, 21, "https://images.unsplash.com/photo-1611186871348-b1ce696e52c9?w=640"));
-        products.add(new Product("USB-C Hub", "Accessories", 22.75, 30, "https://images.unsplash.com/photo-1587825140708-dfaf72ae4b04?w=640"));
-        products.add(new Product("Webcam 1080p", "Accessories", 34.00, 17, "https://images.unsplash.com/photo-1587829741301-dc798b83add3?w=640"));
+    private void refreshProfileHistoryTable() {
+        if (profileHistoryTable == null) {
+            return;
+        }
+        String customerName = currentUser.fullName == null || currentUser.fullName.isBlank() ? currentUser.username : currentUser.fullName;
+        List<DataStorage.Order> orders = DataStorage.getInstance().getOrders();
+        DefaultTableModel model = new DefaultTableModel(new Object[]{"Order ID", "Item", "Qty", "Status", "Delivery ETA"}, 0) {
+            @Override
+            public boolean isCellEditable(int row, int column) {
+                return false;
+            }
+        };
+        for (DataStorage.Order order : orders) {
+            boolean matchedByUsername = order.customerUsername != null && !order.customerUsername.isBlank()
+                    && order.customerUsername.equalsIgnoreCase(currentUser.username);
+            boolean matchedByNameFallback = order.customer.equalsIgnoreCase(customerName)
+                    || order.customer.equalsIgnoreCase(currentUser.username);
+            if (!matchedByUsername && !matchedByNameFallback) {
+                continue;
+            }
+            model.addRow(new Object[]{order.id, order.itemName, order.quantity, order.status, estimateDelivery(order)});
+        }
+        profileHistoryTable.setModel(model);
+    }
 
-        products.add(new Product("Notebook Set", "Office", 8.40, 85, "https://images.unsplash.com/photo-1455390582262-044cdead277a?w=640"));
-        products.add(new Product("Desk Lamp", "Office", 19.20, 26, "https://images.unsplash.com/photo-1507473885765-e6ed057f782c?w=640"));
-        products.add(new Product("Stapler", "Office", 6.25, 40, "https://images.unsplash.com/photo-1586075010923-2dd4570fb338?w=640"));
-        products.add(new Product("Paper Ream A4", "Office", 5.10, 95, "https://images.unsplash.com/photo-1524995997946-a1c2e315a42f?w=640"));
+    private String estimateDelivery(DataStorage.Order order) {
+        try {
+            LocalDate orderDate = LocalDate.parse(order.date);
+            int leadDays = order.status != null && order.status.toUpperCase().contains("PRE-ORDER") ? 7 : 2;
+            return orderDate.plusDays(leadDays).toString();
+        } catch (Exception ignored) {
+            return "-";
+        }
+    }
 
-        products.add(new Product("HDMI Cable 2m", "Cables", 6.90, 0, "https://images.unsplash.com/photo-1550009158-9ebf69173e03?w=640"));
-        products.add(new Product("USB-C Cable", "Cables", 5.60, 120, "https://images.unsplash.com/photo-1583394838336-acd977736f90?w=640"));
-        products.add(new Product("Ethernet Cable Cat6", "Cables", 4.75, 68, "https://images.unsplash.com/photo-1597733336794-12d05021d510?w=640"));
-
-        products.add(new Product("External SSD 1TB", "Storage", 79.00, 9, "https://images.unsplash.com/photo-1591488320449-011701bb6704?w=640"));
-        products.add(new Product("Flash Drive 64GB", "Storage", 12.50, 0, "https://images.unsplash.com/photo-1587037542794-6db8884df0a9?w=640"));
-        products.add(new Product("MicroSD 128GB", "Storage", 15.90, 22, "https://images.unsplash.com/photo-1600348712270-9b1460cc9a6c?w=640"));
-
-        products.add(new Product("Bluetooth Headset", "Audio", 24.90, 14, "https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=640"));
-        products.add(new Product("USB Speaker", "Audio", 18.75, 19, "https://images.unsplash.com/photo-1545454675-3531b543be5d?w=640"));
-        products.add(new Product("Condenser Microphone", "Audio", 39.99, 0, "https://images.unsplash.com/photo-1590602847861-f357a9332bbc?w=640"));
-
-        products.add(new Product("Wi-Fi Router", "Networking", 45.00, 11, "https://images.unsplash.com/photo-1647427060118-4911c9821b82?w=640"));
-        products.add(new Product("8-Port Switch", "Networking", 28.30, 16, "https://images.unsplash.com/photo-1629654297299-c8506221ca97?w=640"));
-        products.add(new Product("Range Extender", "Networking", 31.40, 0, "https://images.unsplash.com/photo-1518770660439-4636190af475?w=640"));
-
-        for (Product product : products) {
+    private void loadProductsFromInventory() {
+        products.clear();
+        cart.clear();
+        for (DataStorage.Item item : DataStorage.getInstance().getItems()) {
+            Product product = new Product(
+                    item.id,
+                    item.name,
+                    item.category == null || item.category.isBlank() ? "General" : item.category,
+                    item.price,
+                    item.quantity,
+                    imageForItemName(item.name, item.category)
+            );
+            products.add(product);
             cart.put(product, 0);
         }
+    }
+
+    private String imageForItemName(String itemName, String category) {
+        String key = itemName == null ? "" : itemName.trim().toLowerCase();
+        if (key.equals("laptop")) return "https://images.unsplash.com/photo-1496181133206-80ce9b88a853?w=640";
+        if (key.contains("desktop computer")) return "https://images.unsplash.com/photo-1587202372616-b43abea06c2a?w=640";
+        if (key.equals("printer")) return "https://images.unsplash.com/photo-1612815154858-60aa4c59eaa6?w=640";
+        if (key.equals("router")) return "assets/router-item.png";
+        if (key.equals("monitor")) return "https://images.unsplash.com/photo-1527443224154-c4a3942d3acf?w=640";
+
+        if (key.equals("bond paper")) return "assets/bondpaper-item.png";
+        if (key.equals("ballpen")) return "assets/ballpen-item.png";
+        if (key.equals("notebook")) return "assets/notebook-item.png";
+        if (key.equals("stapler")) return "assets/stapler-item.png";
+        if (key.equals("folders")) return "assets/folders-item.png";
+
+        if (key.equals("hammer")) return "assets/hammer-item.png";
+        if (key.equals("screwdriver")) return "https://images.unsplash.com/photo-1581147036325-99d0d27f7f66?w=640";
+        if (key.equals("drill machine")) return "https://images.unsplash.com/photo-1504148455328-c376907d081c?w=640";
+        if (key.equals("wrench")) return "https://images.unsplash.com/photo-1581147036325-99d0d27f7f66?w=640";
+        if (key.equals("measuring tape")) return "https://images.unsplash.com/photo-1582582429416-1f293f8cf4b7?w=640";
+
+        if (key.equals("packaging tape")) return "https://images.unsplash.com/photo-1586528116311-ad8dd3c8310d?w=640";
+        if (key.equals("carton box")) return "https://images.unsplash.com/photo-1586528116311-ad8dd3c8310d?w=640";
+        if (key.equals("bubble wrap")) return "https://images.unsplash.com/photo-1601599561213-832382fd07ba?w=640";
+        if (key.equals("plastic bags")) return "https://images.unsplash.com/photo-1583947582886-f40ec95dd752?w=640";
+        if (key.equals("cleaning solution")) return "https://images.unsplash.com/photo-1581578731548-c64695cc6952?w=640";
+
+        if (key.equals("bolts")) return "https://images.unsplash.com/photo-1581092919535-7146ff1a5900?w=640";
+        if (key.equals("nuts")) return "https://images.unsplash.com/photo-1581092919535-7146ff1a5900?w=640";
+        if (key.equals("screws")) return "https://images.unsplash.com/photo-1581092919535-7146ff1a5900?w=640";
+        if (key.equals("bearings")) return "https://images.unsplash.com/photo-1516110833967-0b5716ca1387?w=640";
+        if (key.equals("fuses")) return "https://images.unsplash.com/photo-1622675363311-3e1904dc1885?w=640";
+
+        if (key.equals("shoes")) return "https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=640";
+        if (key.equals("t-shirts")) return "https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?w=640";
+        if (key.equals("backpacks")) return "https://images.unsplash.com/photo-1553062407-98eeb64c6a62?w=640";
+        if (key.equals("water bottles")) return "https://images.unsplash.com/photo-1523362628745-0c100150b504?w=640";
+        if (key.equals("headphones")) return "https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=640";
+
+        String categoryKey = category == null ? "" : category.trim().toLowerCase();
+        return switch (categoryKey) {
+            case "electronics" -> "https://images.unsplash.com/photo-1527814050087-3793815479db?w=640";
+            case "office supplies" -> "https://images.unsplash.com/photo-1455390582262-044cdead277a?w=640";
+            case "tools & equipment" -> "https://images.unsplash.com/photo-1504148455328-c376907d081c?w=640";
+            case "consumables" -> "https://images.unsplash.com/photo-1586528116311-ad8dd3c8310d?w=640";
+            case "spare parts" -> "https://images.unsplash.com/photo-1516110833967-0b5716ca1387?w=640";
+            case "finished goods" -> "https://images.unsplash.com/photo-1556740738-b6a63e27c4df?w=640";
+            default -> "https://images.unsplash.com/photo-1527814050087-3793815479db?w=640";
+        };
     }
 
     private JLabel label(String text, int style, int size, Color color) {
@@ -548,19 +789,39 @@ public class CustomerMainMenu {
         return label;
     }
 
-    private Icon loadProductImage(String url) {
+    private Icon loadProductImage(String url, String itemName) {
         try {
-            ImageIcon icon = new ImageIcon(new URL(url));
-            Image scaled = icon.getImage().getScaledInstance(210, 130, Image.SCALE_SMOOTH);
-            return new ImageIcon(scaled);
+            BufferedImage image;
+            if (url != null && !url.startsWith("http://") && !url.startsWith("https://")) {
+                image = javax.imageio.ImageIO.read(new File(url));
+            } else {
+                URLConnection connection = new URL(url).openConnection();
+                connection.setConnectTimeout(4000);
+                connection.setReadTimeout(4000);
+                image = javax.imageio.ImageIO.read(connection.getInputStream());
+            }
+            if (image != null) {
+                Image scaled = image.getScaledInstance(210, 130, Image.SCALE_SMOOTH);
+                return new ImageIcon(scaled);
+            }
         } catch (Exception ignored) {
-            BufferedImage fallback = new BufferedImage(210, 130, BufferedImage.TYPE_INT_RGB);
-            Graphics2D g2 = fallback.createGraphics();
-            g2.setPaint(new GradientPaint(0, 0, new Color(52, 152, 219), 210, 130, new Color(41, 128, 185)));
-            g2.fillRect(0, 0, 210, 130);
-            g2.dispose();
-            return new ImageIcon(fallback);
+            // Fallback below.
         }
+        BufferedImage fallback = new BufferedImage(210, 130, BufferedImage.TYPE_INT_RGB);
+        Graphics2D g2 = fallback.createGraphics();
+        g2.setPaint(new GradientPaint(0, 0, new Color(30, 64, 175), 210, 130, new Color(29, 78, 216)));
+        g2.fillRect(0, 0, 210, 130);
+        g2.setColor(Color.WHITE);
+        g2.setFont(new Font("Segoe UI", Font.BOLD, 14));
+        g2.drawString("Image unavailable", 42, 52);
+        g2.setFont(new Font("Segoe UI", Font.PLAIN, 12));
+        String text = itemName == null ? "Item" : itemName;
+        if (text.length() > 24) {
+            text = text.substring(0, 24) + "...";
+        }
+        g2.drawString(text, 12, 78);
+        g2.dispose();
+        return new ImageIcon(fallback);
     }
 
     private void styleHeaderButton(JButton button, Color color) {
@@ -572,8 +833,13 @@ public class CustomerMainMenu {
 
     private void styleQuantityButton(JButton button) {
         button.setFocusPainted(false);
-        button.setPreferredSize(new Dimension(40, 28));
-        button.setFont(new Font("Segoe UI", Font.BOLD, 16));
+        button.setPreferredSize(new Dimension(48, 30));
+        button.setMinimumSize(new Dimension(48, 30));
+        button.setFont(new Font("Segoe UI", Font.BOLD, 18));
+        button.setMargin(new Insets(0, 0, 0, 0));
+        button.setHorizontalAlignment(SwingConstants.CENTER);
+        button.setBackground(new Color(225, 232, 242));
+        button.setForeground(new Color(17, 24, 39));
     }
 
     private void styleActionButton(JButton button, Color bg) {
@@ -581,21 +847,288 @@ public class CustomerMainMenu {
         button.setBackground(bg);
         button.setForeground(Color.WHITE);
         button.setFont(new Font("Segoe UI", Font.BOLD, 13));
-        button.setBorder(new EmptyBorder(6, 10, 6, 10));
+        button.setBorder(new EmptyBorder(8, 10, 8, 10));
+        button.setPreferredSize(new Dimension(120, 36));
     }
 
-    private int readQuantity(JTextField qtyField) {
-        try {
-            int qty = Integer.parseInt(qtyField.getText().trim());
-            if (qty <= 0) {
-                qtyField.setText("1");
-                return 1;
-            }
-            return qty;
-        } catch (NumberFormatException exception) {
-            qtyField.setText("1");
-            return 1;
+    private double computePaymentTotal() {
+        double total = 0;
+        for (Map.Entry<Product, Integer> entry : paymentItems.entrySet()) {
+            total += entry.getKey().price * entry.getValue();
         }
+        return total;
+    }
+
+    private String summarizeOrderItems() {
+        StringBuilder builder = new StringBuilder();
+        for (Map.Entry<Product, Integer> entry : paymentItems.entrySet()) {
+            if (!builder.isEmpty()) {
+                builder.append(", ");
+            }
+            builder.append(entry.getKey().name).append(" x").append(entry.getValue());
+        }
+        return builder.toString();
+    }
+
+    private String generateOrderId() {
+        return "ORD-" + (System.currentTimeMillis() % 1000000);
+    }
+
+    private void finalizeCheckout(String name, String address, String phone, String paymentMethod) {
+        List<DataStorage.Order> createdOrders = new java.util.ArrayList<>();
+        try {
+            for (Map.Entry<Product, Integer> entry : paymentItems.entrySet()) {
+                Product product = entry.getKey();
+                int quantity = entry.getValue();
+                String orderId = generateOrderId();
+                DataStorage.Order order = new DataStorage.Order(
+                        orderId,
+                        name,
+                        product.itemCode,
+                        quantity,
+                        paymentIsPreOrder ? "PRE-ORDER" : "PENDING",
+                        LocalDate.now().toString(),
+                        true,
+                        paymentMethod,
+                        currentUser.username,
+                        "",
+                        ""
+                );
+                DataStorage.getInstance().addOrder(order);
+                createdOrders.add(order);
+            }
+        } catch (Exception exception) {
+            JOptionPane.showMessageDialog(mainPanel, exception.getMessage(), "Checkout Failed", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+
+        currentUser.fullName = name;
+        currentUser.address = address;
+        currentUser.phoneNumber = phone;
+        userLabel.setText(name);
+
+        String mode = paymentIsPreOrder ? "Pre-order placed" : "Order placed";
+        JOptionPane.showMessageDialog(mainPanel, mode + " with " + paymentMethod + ". Orders created: " + createdOrders.size(), "Success", JOptionPane.INFORMATION_MESSAGE);
+
+        for (Product product : paymentItems.keySet()) {
+            cart.put(product, 0);
+        }
+        paymentItems.clear();
+        loadProductsFromInventory();
+        refreshProductCards();
+        updateCartBadge();
+        refreshCartPanel();
+        refreshProfileHistoryTable();
+        showView(SHOP_VIEW);
+    }
+
+    private void showQrCheckoutDialog(String customerName, String orderId, String orderItem, double orderTotal, Runnable onConfirm) {
+        JDialog dialog = new JDialog(SwingUtilities.getWindowAncestor(mainPanel), "QR Payment", Dialog.ModalityType.APPLICATION_MODAL);
+        dialog.setDefaultCloseOperation(WindowConstants.DISPOSE_ON_CLOSE);
+
+        JPanel root = new JPanel(new BorderLayout(0, 12));
+        root.setBorder(new EmptyBorder(14, 14, 14, 14));
+        root.setBackground(new Color(248, 250, 252));
+
+        String qrData = String.format(Locale.US,
+                "Customer: %s%nOrder ID: %s%nOrder Item: %s%nOrder Total: %.2f",
+                customerName, orderId, orderItem, orderTotal);
+
+        JLabel qrTitle = new JLabel("Scan to pay", SwingConstants.CENTER);
+        qrTitle.setFont(new Font("Segoe UI", Font.BOLD, 24));
+        qrTitle.setForeground(new Color(15, 23, 42));
+        root.add(qrTitle, BorderLayout.NORTH);
+
+        JPanel center = new JPanel(new BorderLayout(0, 10));
+        center.setOpaque(false);
+        JLabel qrLabel = new JLabel("", SwingConstants.CENTER);
+        qrLabel.setPreferredSize(new Dimension(QR_SIZE, QR_SIZE));
+        qrLabel.setBorder(BorderFactory.createLineBorder(new Color(203, 213, 225)));
+        loadQrCode(qrData, qrLabel);
+        center.add(qrLabel, BorderLayout.NORTH);
+
+        JTextArea info = new JTextArea(
+                "Customer: " + customerName + "\n" +
+                "Order ID: " + orderId + "\n" +
+                "Order Item: " + orderItem + "\n" +
+                "Order Total: " + currencyFormat.format(orderTotal)
+        );
+        info.setEditable(false);
+        info.setLineWrap(true);
+        info.setWrapStyleWord(true);
+        info.setFont(new Font("Segoe UI", Font.PLAIN, 14));
+        info.setBackground(new Color(241, 245, 249));
+        info.setBorder(new EmptyBorder(10, 10, 10, 10));
+        center.add(info, BorderLayout.CENTER);
+        root.add(center, BorderLayout.CENTER);
+
+        JButton cancel = new JButton("Cancel");
+        JButton confirm = new JButton("Confirm Payment");
+        styleActionButton(cancel, new Color(108, 117, 125));
+        styleActionButton(confirm, new Color(22, 163, 74));
+        confirm.setPreferredSize(new Dimension(175, 38));
+        confirm.setMinimumSize(new Dimension(175, 38));
+        cancel.addActionListener(e -> dialog.dispose());
+        confirm.addActionListener(e -> {
+            dialog.dispose();
+            onConfirm.run();
+        });
+
+        JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
+        actions.setOpaque(false);
+        actions.add(cancel);
+        actions.add(confirm);
+        root.add(actions, BorderLayout.SOUTH);
+
+        dialog.setContentPane(root);
+        dialog.setSize(460, 640);
+        dialog.setLocationRelativeTo(mainPanel);
+        dialog.setVisible(true);
+    }
+
+    private void showCashCheckoutDialog(String name, String address, String phone, String paymentMethod, double totalAmount) {
+        String orderItemsSnapshot = summarizeOrderItems();
+        JDialog dialog = new JDialog(SwingUtilities.getWindowAncestor(mainPanel), "Cash Payment", Dialog.ModalityType.APPLICATION_MODAL);
+        dialog.setDefaultCloseOperation(WindowConstants.DISPOSE_ON_CLOSE);
+
+        JPanel root = new JPanel(new BorderLayout(0, 12));
+        root.setBorder(new EmptyBorder(14, 14, 14, 14));
+        root.setBackground(new Color(248, 250, 252));
+
+        JLabel title = new JLabel("Cashier", SwingConstants.LEFT);
+        title.setFont(new Font("Segoe UI", Font.BOLD, 24));
+        title.setForeground(new Color(15, 23, 42));
+        root.add(title, BorderLayout.NORTH);
+
+        JTextField totalField = new JTextField(String.format(Locale.US, "%.2f", totalAmount));
+        totalField.setEditable(false);
+        JTextField cashField = new JTextField();
+        JTextField changeField = new JTextField("0.00");
+        changeField.setEditable(false);
+        styleCashField(totalField);
+        styleCashField(cashField);
+        styleCashField(changeField);
+
+        cashField.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
+            private void update() {
+                String text = cashField.getText().trim();
+                if (text.isEmpty()) {
+                    changeField.setText("0.00");
+                    return;
+                }
+                try {
+                    double cash = Double.parseDouble(text);
+                    double change = cash - totalAmount;
+                    changeField.setText(String.format(Locale.US, "%.2f", Math.max(change, 0.0)));
+                } catch (NumberFormatException ignored) {
+                    changeField.setText("0.00");
+                }
+            }
+            public void insertUpdate(javax.swing.event.DocumentEvent e) { update(); }
+            public void removeUpdate(javax.swing.event.DocumentEvent e) { update(); }
+            public void changedUpdate(javax.swing.event.DocumentEvent e) { update(); }
+        });
+
+        JPanel form = new JPanel();
+        form.setOpaque(false);
+        form.setLayout(new BoxLayout(form, BoxLayout.Y_AXIS));
+        form.add(labeledCashField("Order Total", totalField));
+        form.add(Box.createVerticalStrut(10));
+        form.add(labeledCashField("Cash Received", cashField));
+        form.add(Box.createVerticalStrut(10));
+        form.add(labeledCashField("Change", changeField));
+        root.add(form, BorderLayout.CENTER);
+
+        JButton cancel = new JButton("Cancel");
+        JButton confirm = new JButton("Confirm Payment");
+        styleActionButton(cancel, new Color(108, 117, 125));
+        styleActionButton(confirm, new Color(22, 163, 74));
+        confirm.setPreferredSize(new Dimension(175, 38));
+        confirm.setMinimumSize(new Dimension(175, 38));
+        cancel.addActionListener(e -> dialog.dispose());
+        confirm.addActionListener(e -> {
+            double cash;
+            try {
+                cash = Double.parseDouble(cashField.getText().trim());
+            } catch (NumberFormatException ex) {
+                JOptionPane.showMessageDialog(dialog, "Enter a valid cash amount.", "Invalid Amount", JOptionPane.ERROR_MESSAGE);
+                return;
+            }
+            if (cash < totalAmount) {
+                JOptionPane.showMessageDialog(dialog, "Cash amount is less than order total.", "Insufficient Cash", JOptionPane.ERROR_MESSAGE);
+                return;
+            }
+            dialog.dispose();
+            finalizeCheckout(name, address, phone, paymentMethod);
+            showCustomerReceipt(name, orderItemsSnapshot, totalAmount, paymentMethod, String.format(Locale.US, "%.2f", cash), changeField.getText());
+        });
+
+        JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
+        actions.setOpaque(false);
+        actions.add(cancel);
+        actions.add(confirm);
+        root.add(actions, BorderLayout.SOUTH);
+
+        dialog.setContentPane(root);
+        dialog.setSize(460, 380);
+        dialog.setLocationRelativeTo(mainPanel);
+        dialog.setVisible(true);
+    }
+
+    private void loadQrCode(String qrData, JLabel target) {
+        try {
+            String encoded = URLEncoder.encode(qrData, StandardCharsets.UTF_8);
+            URL qrUrl = new URL("https://quickchart.io/qr?size=" + QR_SIZE + "&margin=6&ecLevel=H&format=png&text=" + encoded);
+            BufferedImage image = javax.imageio.ImageIO.read(qrUrl);
+            if (image != null) {
+                Image scaled = image.getScaledInstance(QR_SIZE, QR_SIZE, Image.SCALE_SMOOTH);
+                target.setIcon(new ImageIcon(scaled));
+                target.setText("");
+                return;
+            }
+        } catch (Exception ignored) {
+            // Fallback below.
+        }
+        target.setIcon(null);
+        target.setText("<html><center>QR service unavailable.<br>Please try again.</center></html>");
+    }
+
+    private JPanel labeledCashField(String labelText, JTextField field) {
+        JPanel panel = new JPanel(new BorderLayout(0, 8));
+        panel.setOpaque(false);
+        JLabel label = new JLabel(labelText);
+        label.setForeground(new Color(55, 65, 81));
+        label.setFont(new Font("Segoe UI", Font.BOLD, 13));
+        panel.add(label, BorderLayout.NORTH);
+        panel.add(field, BorderLayout.CENTER);
+        return panel;
+    }
+
+    private void styleCashField(JTextField field) {
+        field.setForeground(new Color(17, 24, 39));
+        field.setCaretColor(new Color(17, 24, 39));
+        field.setFont(new Font("Segoe UI", Font.PLAIN, 14));
+        field.setPreferredSize(new Dimension(0, 36));
+        field.setMaximumSize(new Dimension(Integer.MAX_VALUE, 36));
+    }
+
+    private void showCustomerReceipt(String customerName, String orderItems, double total, String paymentMethod, String cashReceived, String change) {
+        String receipt = String.format(Locale.US,
+                "RECEIPT%n" +
+                        "Date: %s%n" +
+                        "Customer: %s%n" +
+                        "Order Item(s): %s%n" +
+                        "Order Total: %.2f%n" +
+                        "Payment Method: %s%n" +
+                        "Cash Received: %s%n" +
+                        "Change: %s%n" +
+                        "Status: PAID%n",
+                LocalDate.now(), customerName, orderItems, total, paymentMethod, cashReceived, change);
+
+        JTextArea area = new JTextArea(receipt);
+        area.setEditable(false);
+        area.setFont(new Font("Consolas", Font.PLAIN, 13));
+        JOptionPane.showMessageDialog(mainPanel, new JScrollPane(area), "Payment Receipt", JOptionPane.INFORMATION_MESSAGE);
     }
 
     public JPanel getMainPanel() {
@@ -603,13 +1136,15 @@ public class CustomerMainMenu {
     }
 
     private static class Product {
+        private final String itemCode;
         private final String name;
         private final String category;
         private final double price;
         private final int stock;
         private final String imageUrl;
 
-        private Product(String name, String category, double price, int stock, String imageUrl) {
+        private Product(String itemCode, String name, String category, double price, int stock, String imageUrl) {
+            this.itemCode = itemCode;
             this.name = name;
             this.category = category;
             this.price = price;

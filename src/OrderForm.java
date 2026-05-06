@@ -485,6 +485,8 @@ public class OrderForm {
 
         final String[] paymentMethod = {null};
         JButton paidButton = createActionButton("Confirm Payment");
+        paidButton.setPreferredSize(new Dimension(170, 38));
+        paidButton.setMinimumSize(new Dimension(170, 38));
         paidButton.addActionListener(event -> {
             if (tabs.getSelectedIndex() == 1) {
                 JTextField cashField = (JTextField) tabs.getClientProperty("cashField");

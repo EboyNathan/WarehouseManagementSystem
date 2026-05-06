@@ -18,6 +18,7 @@ public class MainMenu {
     private final OrderForm orderForm;
     private final UserForm userForm;
     private final ReportForm reportForm;
+    private final ReceiverForm receiverForm;
     private final Runnable logoutHandler;
     private final CardLayout contentLayout = new CardLayout();
     private final Map<String, JButton> navButtons = new LinkedHashMap<>();
@@ -54,6 +55,7 @@ public class MainMenu {
         this.orderForm = new OrderForm(userRole);
         this.userForm = new UserForm(userRole);
         this.reportForm = new ReportForm(userRole);
+        this.receiverForm = new ReceiverForm();
 
         if (mainPanel == null) {
             buildUi();
@@ -62,7 +64,7 @@ public class MainMenu {
         }
         wireActions();
         applyRoleAccess();
-        showModule("inventory");
+        showModule(userRole == UserRole.RECEIVER ? "receiver" : "inventory");
     }
 
     private void buildUi() {
@@ -125,6 +127,7 @@ public class MainMenu {
         contentPanel.add(wrapContent(orderForm.getMainPanel()), "orders");
         contentPanel.add(wrapContent(userForm.getMainPanel()), "users");
         contentPanel.add(wrapContent(reportForm.getMainPanel()), "reports");
+        contentPanel.add(wrapContent(receiverForm.getMainPanel()), "receiver");
 
         mainPanel.add(headerPanel, BorderLayout.NORTH);
         mainPanel.add(contentPanel, BorderLayout.CENTER);
@@ -172,6 +175,7 @@ public class MainMenu {
         contentPanel.add(wrapContent(orderForm.getMainPanel()), "orders");
         contentPanel.add(wrapContent(userForm.getMainPanel()), "users");
         contentPanel.add(wrapContent(reportForm.getMainPanel()), "reports");
+        contentPanel.add(wrapContent(receiverForm.getMainPanel()), "receiver");
     }
 
     private JButton createNavButton(String text) {
@@ -221,6 +225,22 @@ public class MainMenu {
     }
 
     private NamedRunnable[] orderActions() {
+        if (userRole == UserRole.RECEIVER) {
+            return new NamedRunnable[]{
+                    action("Order Queue", () -> {
+                        showModule("receiver");
+                        receiverForm.showQueueView();
+                    }),
+                    action("Assign Courier", () -> {
+                        showModule("receiver");
+                        receiverForm.showQueueView();
+                    }),
+                    action("History", () -> {
+                        showModule("receiver");
+                        receiverForm.showHistoryView();
+                    })
+            };
+        }
         return new NamedRunnable[]{
                 action("Create Order", () -> orderForm.showAction("create")),
                 action("Update Status", () -> orderForm.showAction("status")),
@@ -275,6 +295,12 @@ public class MainMenu {
         if (userRole == UserRole.STAFF) {
             usersButton.setEnabled(false);
             usersButton.setToolTipText("Only admins can access user management.");
+        } else if (userRole == UserRole.RECEIVER) {
+            inventoryButton.setEnabled(false);
+            usersButton.setEnabled(false);
+            reportsButton.setEnabled(false);
+            ordersButton.setText("Dispatch");
+            ordersButton.setToolTipText("Receiver dispatch workflow");
         }
     }
 
